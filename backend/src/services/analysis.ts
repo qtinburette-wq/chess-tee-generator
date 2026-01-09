@@ -25,9 +25,10 @@ export async function analyzeGame(
   focusColor?: FocusColor
 ): Promise<Puzzle[]> {
   const chess = new Chess();
-  const ok = chess.loadPgn(pgn);
 
-  if (!ok) {
+  try {
+    chess.loadPgn(pgn);
+  } catch {
     throw new Error("Invalid PGN");
   }
 
@@ -78,3 +79,4 @@ export async function analyzeGame(
 
   return puzzles;
 }
+
