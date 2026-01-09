@@ -2,26 +2,20 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Copy root files
-COPY package*.json ./
-
-# Copy backend and widget
+# Copy sources
 COPY backend ./backend
 COPY widget ./widget
 
-# Install and Build Widget
+# Build widget
 WORKDIR /app/widget
 RUN npm install
 RUN npm run build
 
-# Install and Build Backend
+# Build backend
 WORKDIR /app/backend
 RUN npm install
 RUN npm run build
 
-# Environment
-ENV PORT=3000
+# Start backend
 EXPOSE 3000
-
-# Start
-CMD ["node", "dist/index.js"]
+CMD ["npm", "run", "start"]
