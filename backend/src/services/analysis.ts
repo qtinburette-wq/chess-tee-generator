@@ -20,29 +20,20 @@ function moveToLabel(move: any): string {
   return "";
 }
 
-/**
- * MVP (no Stockfish):
- * - parse PGN
- * - pick up to 5 moves for chosen side (spread across game)
- * - return puzzles with FEN before the move + SAN label
- */
 export async function analyzeGame(
   pgn: string,
   focusColor?: FocusColor
 ): Promise<Puzzle[]> {
   const chess = new Chess();
-  const ok = chess.load_pgn(pgn, { sloppy: true });
+  const ok = chess.loadPgn(pgn);
 
   if (!ok) {
     throw new Error("Invalid PGN");
   }
 
   const focus = pickFocus(focusColor);
-
-  // Get verbose history from chess.js
   const history = chess.history({ verbose: true }) as any[];
 
-  // Indices of moves made by focus side
   const focusMoveIdx: number[] = [];
   for (let i = 0; i < history.length; i++) {
     const isWhiteMove = i % 2 === 0;
@@ -53,7 +44,6 @@ export async function analyzeGame(
 
   if (focusMoveIdx.length === 0) return [];
 
-  // Choose up to 5 moves spread across the available focus moves
   const count = Math.min(5, focusMoveIdx.length);
   const chosen: number[] = [];
   for (let k = 0; k < count; k++) {
