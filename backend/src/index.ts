@@ -18,11 +18,8 @@ import path from 'path';
 // Assuming running from backend/dist/
 const widgetPath = path.join(__dirname, '../../widget/dist/assets');
 app.use('/widget', express.static(widgetPath));
-// Also serve the entry point wrapper if needed, or just let user point to assets/index.js
-// Ideally, we want a stable URL like /widget.js
-app.get('/widget.js', (req, res) => {
-    // Find the JS file in widget/dist/assets
-    const fs = require('fs');
+...
+const fs = require('fs');
     try {
         const files = fs.readdirSync(widgetPath);
         const jsFile = files.find((f: string) => f.endsWith('.js') && f.startsWith('index')); // or main
