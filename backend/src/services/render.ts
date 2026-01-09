@@ -1,124 +1,136 @@
-import satori from 'satori';
-// import { Resvg } from '@resvg/resvg-js'; 
-// Note: Imports might be tricky with some versions, using require pattern if needed or import
-import { Resvg } from '@resvg/resvg-js';
-import { html } from 'satori-html';
-import { Puzzle } from '../types';
-import { uploadFile } from './upload';
-import fs from 'fs';
-import path from 'path';
+// backend/src/services/render.ts
 
-// Load a font
-const fontPath = path.join(process.cwd(), 'assets', 'Inter-Regular.ttf');
-let fontData: Buffer;
-try {
-    // Ensure assets folder exists or read from somewhere
-    // For MVP we might need to download a font or rely on system (Satori needs font data)
-    // We will mock this or require a font file to be present
-    // fontData = fs.readFileSync(fontPath);
-} catch (e) {
-    console.warn("Font not found, using empty buffer (will fail text render)");
-    fontData = Buffer.alloc(0);
-}
+import { Resvg } from "@resvg/resvg-js";
 
-// Helper to generate SVG for a single board
-// We need a way to render a chessboard.
-// Option A: Use a library. Option B: Draw rects.
-// Satori supports HTML/CSS. We can draw the board with CSS Grid.
-// We need piece images (SVGs/PNGs). 
-// For MVP, simple CSS board.
-
-const PIECE_URLS: Record<string, string> = {
-    'p': 'https://upload.wikimedia.org/wikipedia/commons/c/c7/Chess_pdt45.svg',
-    'r': 'https://upload.wikimedia.org/wikipedia/commons/f/ff/Chess_rdt45.svg',
-    'n': 'https://upload.wikimedia.org/wikipedia/commons/e/ef/Chess_ndt45.svg',
-    'b': 'https://upload.wikimedia.org/wikipedia/commons/9/98/Chess_bdt45.svg',
-    'q': 'https://upload.wikimedia.org/wikipedia/commons/4/47/Chess_qdt45.svg',
-    'k': 'https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg',
-    'P': 'https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg',
-    'R': 'https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg',
-    'N': 'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg',
-    'B': 'https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg',
-    'Q': 'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg',
-    'K': 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg',
+export type Puzzle = {
+  title?: string;
+  fen?: string;
+  bestMove?: string;
+  description?: string;
 };
 
-function fenToBoard(fen: string) {
-    const rows = fen.split(' ')[0].split('/');
-    const board: (string | null)[][] = [];
-    for (const rowVal of rows) {
-        const row: (string | null)[] = [];
-        for (const char of rowVal) {
-            if (/\d/.test(char)) {
-                for (let i = 0; i < parseInt(char); i++) row.push(null);
-            } else {
-                row.push(char);
-            }
-        }
-        board.push(row);
+export type RenderMeta = {
+  username?: string;
+  tagline?: string;
+};
+
+function esc(s: string) {
+  return (s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function wrapText(text: string, max = 54) {
+  const words = (text || "").split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (next.length > max) {
+      if (cur) lines.push(cur);
+      cur = w;
+    } else {
+      cur = next;
     }
-    return board;
+  }
+  if (cur) lines.push(cur);
+  return lines;
 }
 
-async function renderPuzzleCard(puzzle: Puzzle) {
-    const board = fenToBoard(puzzle.fen);
+export async function generateDesign(puzzles: Puzzle[], meta: RenderMeta = {}) {
+  const W = 1200;
+  const H = 1600;
 
-    // HTML Template for Satori
-    // Needs to return a React-element-like object. satori-html helps parsing strings.
-    // Simplifying logic: Just creating a big string of HTML
+  const username = meta.username ? `@${meta.username}` : "chess-tee";
+  const tagline = meta.tagline || "Best moments, printed.";
 
-    let squares = '';
-    board.forEach((row, r) => {
-        row.forEach((piece, c) => {
-            const isDark = (r + c) % 2 === 1;
-            const bg = isDark ? '#B58863' : '#F0D9B5';
-            let pieceImg = '';
-            if (piece) {
-                pieceImg = `<img src="${PIECE_URLS[piece]}" style="width: 100%; height: 100%;" />`;
-            }
-            squares += `<div style="display: flex; width: 40px; height: 40px; background-color: ${bg}; align-items: center; justify-content: center;">${pieceImg}</div>`;
-        });
-    });
+  const top = (puzzles || []).slice(0, 5);
 
-    const markup = `
-    <div style="display: flex; flex-direction: column; align-items: center; width: 340px; height: 400px; background: white; border: 1px solid #333; padding: 10px;">
-        <div style="display: flex; flex-wrap: wrap; width: 320px; height: 320px; border: 2px solid #555;">
-            ${squares}
-        </div>
-        <div style="margin-top: 10px; font-size: 16px; font-family: sans-serif;">
-            ${puzzle.turn === 'w' ? 'White' : 'Black'} to play
-        </div>
-    </div>
-    `;
+  // Simple SVG “poster” (black/white) – stable, compile-safe
+  const lines: string[] = [];
 
-    // @ts-ignore
-    const svg = await satori(html(markup), {
-        width: 340,
-        height: 400,
-        fonts: [
-            // Minimal font config or default
-            {
-                name: 'Inter',
-                data: await loadFont(), // Need to implement
-                weight: 400,
-                style: 'normal',
-             {
-                name: 'Inter',
-                data: font,
-                weight: 400,
-                style: 'normal',
-            },
-        ],
-    });
+  lines.push(
+    `<text x="80" y="140" font-size="54" font-family="Arial, Helvetica, sans-serif" font-weight="700" fill="#111">${esc(
+      username
+    )}</text>`
+  );
+  lines.push(
+    `<text x="80" y="200" font-size="26" font-family="Arial, Helvetica, sans-serif" fill="#444">${esc(
+      tagline
+    )}</text>`
+  );
 
-    // Convert to PNG for preview
-    const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: 800 } });
-    const pngBuffer = resvg.render().asPng();
-    const svgBuffer = Buffer.from(svg);
+  // Divider
+  lines.push(`<line x1="80" y1="240" x2="${W - 80}" y2="240" stroke="#ddd" stroke-width="2" />`);
 
-    const id = Date.now().toString();
-    const svgUrl = await uploadFile(svgBuffer, `designs/${id}.svg`, 'image/svg+xml');
-    const previewUrl = await uploadFile(pngBuffer, `previews/${id}.png`, 'image/png');
+  // Puzzles list
+  let y = 320;
+  top.forEach((p, i) => {
+    const title = p.title || `Puzzle #${i + 1}`;
+    const move = p.bestMove ? `Best move: ${p.bestMove}` : "";
+    const desc = p.description || "";
 
-    return { designId: id, printFileUrl: svgUrl, previewUrl };
+    lines.push(
+      `<text x="80" y="${y}" font-size="30" font-family="Arial, Helvetica, sans-serif" font-weight="700" fill="#111">${esc(
+        title
+      )}</text>`
+    );
+    y += 44;
+
+    if (move) {
+      lines.push(
+        `<text x="80" y="${y}" font-size="24" font-family="Arial, Helvetica, sans-serif" fill="#222">${esc(
+          move
+        )}</text>`
+      );
+      y += 38;
+    }
+
+    if (desc) {
+      const wrapped = wrapText(desc, 64).slice(0, 3);
+      for (const l of wrapped) {
+        lines.push(
+          `<text x="80" y="${y}" font-size="22" font-family="Arial, Helvetica, sans-serif" fill="#555">${esc(
+            l
+          )}</text>`
+        );
+        y += 32;
+      }
+      y += 12;
+    }
+
+    // small separator
+    lines.push(`<line x1="80" y1="${y}" x2="${W - 80}" y2="${y}" stroke="#eee" stroke-width="2" />`);
+    y += 54;
+  });
+
+  // Footer
+  lines.push(
+    `<text x="80" y="${H - 90}" font-size="22" font-family="Arial, Helvetica, sans-serif" fill="#777">${esc(
+      "Generated by chess-tee-generator"
+    )}</text>`
+  );
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>
+  ${lines.join("\n  ")}
+</svg>`;
+
+  // Render PNG from SVG
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: "width", value: W },
+  });
+
+  const pngData = resvg.render().asPng();
+  const pngBase64 = Buffer.from(pngData).toString("base64");
+
+  return {
+    svg,
+    png: `data:image/png;base64,${pngBase64}`,
+  };
 }
+
