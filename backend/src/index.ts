@@ -3,7 +3,6 @@ import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
 
 import { getRecentGames } from "./services/chesscom";
 import { analyzeGame } from "./services/analysis";
@@ -18,22 +17,17 @@ app.use(cors());
 app.use(express.json());
 
 // --------------------
-// Serve Widget (ESM-safe)
+// Serve Widget (CommonJS-safe)
 // --------------------
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Assuming running from backend/dist/
+// When compiled to dist/, __dirname will be backend/dist
 const widgetPath = path.join(__dirname, "../../widget/dist/assets");
 
 app.use("/widget", express.static(widgetPath));
 
-// Stable URL like /widget.js
 app.get("/widget.js", (_req, res) => {
   try {
     const files = fs.readdirSync(widgetPath);
 
-    // Try to find a likely entry file first
     const jsFile =
       files.find((f) => f.endsWith(".js") && f.includes("index")) ||
       files.find((f) => f.endsWith(".js"));
@@ -41,10 +35,18 @@ app.get("/widget.js", (_req, res) => {
     if (jsFile) {
       return res.sendFile(path.join(widgetPath, jsFile));
     }
+
     return res.status(404).send("Widget build not found");
-  } catch (e) {
+  } catch {
     return res.status(500).send("Widget build missing");
   }
+});
+
+// --------------------
+// Basic root route (helps Render)
+// --------------------
+app.get("/", (_req, res) => {
+  res.type("text").send("Chess Tee Generator API is running ✅");
 });
 
 // --------------------
@@ -59,14 +61,15 @@ app.get("/health", (_req, res) => {
 // --------------------
 app.get("/api/chesscom/games", async (req, res) => {
   try {
-    const username = req.query.username as string;
-    if (!username) {
+    const username = (req.query.username as string) || "";
+    if (!username.trim()) {
       return res.status(400).json({ error: "Username required" });
     }
-    const games = await getRecentGames(username);
-    res.json({ games });
+
+    const games = await getRecentGames(username.trim());
+    return res.json({ games });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "Unknown error" });
+    return res.status(500).json({ error: e?.message || "Unknown error" });
   }
 });
 
@@ -75,14 +78,14 @@ app.get("/api/chesscom/games", async (req, res) => {
 // --------------------
 app.post("/api/analyze", async (req, res) => {
   try {
-    const { pgn, focusColor } = req.body;
+    const { pgn, focusColor } = req.body || {};
     if (!pgn) return res.status(400).json({ error: "PGN required" });
 
     const puzzles = await analyzeGame(pgn, focusColor);
-    res.json({ puzzles });
+    return res.json({ puzzles });
   } catch (e: any) {
     console.error(e);
-    res.status(500).json({ error: e?.message || "Unknown error" });
+    return res.status(500).json({ error: e?.message || "Unknown error" });
   }
 });
 
@@ -91,16 +94,16 @@ app.post("/api/analyze", async (req, res) => {
 // --------------------
 app.post("/api/render", async (req, res) => {
   try {
-    const { puzzles, meta } = req.body;
+    const { puzzles, meta } = req.body || {};
     if (!puzzles || !Array.isArray(puzzles)) {
       return res.status(400).json({ error: "Puzzles array required" });
     }
 
     const result = await generateDesign(puzzles, meta || {});
-    res.json(result);
+    return res.json(result);
   } catch (e: any) {
     console.error(e);
-    res.status(500).json({ error: e?.message || "Unknown error" });
+    return res.status(500).json({ error: e?.message || "Unknown error" });
   }
 });
 
@@ -108,5 +111,6 @@ app.post("/api/render", async (req, res) => {
 // Start server
 // --------------------
 app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
+  console.log(`Server running on port ${port}`);
 });
+
