@@ -9,44 +9,40 @@ export type Puzzle = {
 
 type FocusColor = "white" | "black" | undefined;
 
-function pickFocusColorFromPgn(pgn: string, focusColor?: FocusColor): "w" | "b" {
-  if (focusColor === "white") return "w";
+function pickFocus(focusColor?: FocusColor): "w" | "b" {
   if (focusColor === "black") return "b";
-
-  // fallback: if PGN contains [White "..."] use white by default
   return "w";
 }
 
-function safeSan(move: any): string {
-  // chess.js move object often has san property
-  if (move && typeof move.san === "string") return move.san;
+function moveToLabel(move: any): string {
+  if (move && typeof move.san === "string" && move.san.trim()) return move.san;
+  if (move && move.from && move.to) return `${move.from}-${move.to}`;
   return "";
 }
 
 /**
- * MVP analysis without Stockfish:
- * - parses the game
- * - selects 5 moves from the chosen side (roughly spread through the game)
- * - returns them as "puzzles" with FEN before the move + SAN move
- *
- * This keeps the service deployable. We'll reintroduce real Stockfish later
- * using a compatible engine/WASM.
+ * MVP (no Stockfish):
+ * - parse PGN
+ * - pick up to 5 moves for chosen side (spread across game)
+ * - return puzzles with FEN before the move + SAN label
  */
-export async function analyzeGame(pgn: string, focusColor?: FocusColor): Promise<Puzzle[]> {
+export async function analyzeGame(
+  pgn: string,
+  focusColor?: FocusColor
+): Promise<Puzzle[]> {
   const chess = new Chess();
-
   const ok = chess.load_pgn(pgn, { sloppy: true });
+
   if (!ok) {
     throw new Error("Invalid PGN");
   }
 
-  const focus = pickFocusColorFromPgn(pgn, focusColor);
+  const focus = pickFocus(focusColor);
 
-  // Replay game while capturing positions before each move
-  const chess2 = new Chess();
+  // Get verbose history from chess.js
   const history = chess.history({ verbose: true }) as any[];
 
-  // Indices of moves played by focus side
+  // Indices of moves made by focus side
   const focusMoveIdx: number[] = [];
   for (let i = 0; i < history.length; i++) {
     const isWhiteMove = i % 2 === 0;
@@ -55,41 +51,40 @@ export async function analyzeGame(pgn: string, focusColor?: FocusColor): Promise
     }
   }
 
-  if (!focusMoveIdx.length) return [];
+  if (focusMoveIdx.length === 0) return [];
 
-  // Choose up to 5 moves spread across the game
-  const picks: number[] = [];
-  const n = Math.min(5, focusMoveIdx.length);
-  for (let k = 0; k < n; k++) {
-    const pos = Math.floor((k * (focusMoveIdx.length - 1)) / Math.max(1, n - 1));
-    picks.push(focusMoveIdx[pos]);
+  // Choose up to 5 moves spread across the available focus moves
+  const count = Math.min(5, focusMoveIdx.length);
+  const chosen: number[] = [];
+  for (let k = 0; k < count; k++) {
+    const pos =
+      count === 1
+        ? 0
+        : Math.floor((k * (focusMoveIdx.length - 1)) / (count - 1));
+    chosen.push(focusMoveIdx[pos]);
   }
 
+  const replay = new Chess();
   const puzzles: Puzzle[] = [];
-  for (let p = 0; p < picks.length; p++) {
-    const targetIdx = picks[p];
 
-    chess2.reset();
-    for (let i = 0; i < targetIdx; i++) {
-      chess2.move(history[i]);
+  for (let p = 0; p < chosen.length; p++) {
+    const idx = chosen[p];
+
+    replay.reset();
+    for (let i = 0; i < idx; i++) {
+      replay.move(history[i]);
     }
 
-    const fenBefore = chess2.fen();
-    const moveObj = history[targetIdx];
-    const san = safeSan(moveObj);
+    const fenBefore = replay.fen();
+    const moveObj = history[idx];
 
     puzzles.push({
       title: `Best moment #${p + 1}`,
       fen: fenBefore,
-      bestMove: san || (moveObj?.from && moveObj?.to ? `${moveObj.from}-${moveObj.to}` : ""),
+      bestMove: moveToLabel(moveObj),
       description: "MVP selection (Stockfish will be added next)."
     });
   }
 
   return puzzles;
-}
-
-    }
-
-    return selected;
 }
