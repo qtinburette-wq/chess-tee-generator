@@ -131,7 +131,11 @@ export function App() {
 
       {step === 2 && moments && (
         <div>
-          <button onClick={() => setStep(1)} style="padding: 8px 12px; margin: "0 0 16px";">
+          <button
+  onClick={() => setStep(1)}
+  style={{ padding: "8px 12px", margin: "0 0 16px 0" }}
+>
+
             ← Back
           </button>
 
