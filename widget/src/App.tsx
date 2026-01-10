@@ -52,7 +52,7 @@ export function App() {
 
   // Config (Shopify will inject this)
   const config = window.CHESS_TEE || {
-    apiBase: "http://localhost:3000",
+    apiBase: "https://chess-tee-generator.onrender.com",
     variantId: 0
   };
 
