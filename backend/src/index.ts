@@ -74,6 +74,51 @@ app.get("/api/chesscom/games", async (req, res) => {
 });
 
 // --------------------
+// NEW: One-call endpoint
+// Username -> recent game -> analyze -> 5 puzzles
+// --------------------
+app.get("/api/puzzles", async (req, res) => {
+  try {
+    const username = (req.query.username as string) || "";
+    if (!username.trim()) {
+      return res.status(400).json({ error: "Username required" });
+    }
+
+    // 1) Get recent games from chess.com
+    const games = await getRecentGames(username.trim());
+    if (!games || games.length === 0) {
+      return res.json({ puzzles: [] });
+    }
+
+    // 2) Pick the most recent game that contains a PGN
+    // (Your chesscom service should return a field "pgn" on each game)
+    const gameWithPgn = games.find((g: any) => typeof g?.pgn === "string" && g.pgn.length > 0);
+
+    if (!gameWithPgn) {
+      return res.json({ puzzles: [] });
+    }
+
+    // 3) Analyze it -> returns puzzles (with fen + bestMove ideally)
+    const puzzles = await analyzeGame(gameWithPgn.pgn, "white");
+
+    // 4) Send to frontend
+    return res.json({
+      username: username.trim(),
+      sourceGame: {
+        // optional fields (won't break if missing)
+        url: (gameWithPgn as any)?.url,
+        end_time: (gameWithPgn as any)?.end_time,
+        time_class: (gameWithPgn as any)?.time_class
+      },
+      puzzles
+    });
+  } catch (e: any) {
+    console.error(e);
+    return res.status(500).json({ error: e?.message || "Unknown error" });
+  }
+});
+
+// --------------------
 // Analyze (Stockfish best moments)
 // --------------------
 app.post("/api/analyze", async (req, res) => {
@@ -113,4 +158,3 @@ app.post("/api/render", async (req, res) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
-
