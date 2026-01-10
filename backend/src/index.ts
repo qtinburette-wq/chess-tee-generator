@@ -32,10 +32,7 @@ app.get("/widget.js", (_req, res) => {
       files.find((f) => f.endsWith(".js") && f.includes("index")) ||
       files.find((f) => f.endsWith(".js"));
 
-    if (jsFile) {
-      return res.sendFile(path.join(widgetPath, jsFile));
-    }
-
+    if (jsFile) return res.sendFile(path.join(widgetPath, jsFile));
     return res.status(404).send("Widget build not found");
   } catch {
     return res.status(500).send("Widget build missing");
@@ -62,9 +59,7 @@ app.get("/health", (_req, res) => {
 app.get("/api/chesscom/games", async (req, res) => {
   try {
     const username = (req.query.username as string) || "";
-    if (!username.trim()) {
-      return res.status(400).json({ error: "Username required" });
-    }
+    if (!username.trim()) return res.status(400).json({ error: "Username required" });
 
     const games = await getRecentGames(username.trim());
     return res.json({ games });
@@ -74,43 +69,38 @@ app.get("/api/chesscom/games", async (req, res) => {
 });
 
 // --------------------
-// NEW: One-call endpoint
-// Username -> recent game -> analyze -> 5 puzzles
+// NEW: Best moments for a username (simple version)
+// - takes the most recent game
+// - returns 5 puzzles + source game
 // --------------------
-app.get("/api/puzzles", async (req, res) => {
+app.get("/api/best-moments", async (req, res) => {
   try {
     const username = (req.query.username as string) || "";
-    if (!username.trim()) {
-      return res.status(400).json({ error: "Username required" });
-    }
+    if (!username.trim()) return res.status(400).json({ error: "Username required" });
 
-    // 1) Get recent games from chess.com
     const games = await getRecentGames(username.trim());
     if (!games || games.length === 0) {
-      return res.json({ puzzles: [] });
+      return res.status(404).json({ error: "No recent games found" });
     }
 
-    // 2) Pick the most recent game that contains a PGN
-    // (Your chesscom service should return a field "pgn" on each game)
-    const gameWithPgn = games.find((g: any) => typeof g?.pgn === "string" && g.pgn.length > 0);
+    // Pick the most recent game (games are usually already sorted, but we’ll be safe)
+    const sorted = [...games].sort((a: any, b: any) => (b.end_time || 0) - (a.end_time || 0));
+    const sourceGame = sorted[0];
 
-    if (!gameWithPgn) {
-      return res.json({ puzzles: [] });
+    if (!sourceGame?.pgn) {
+      return res.status(500).json({ error: "Game PGN missing" });
     }
 
-    // 3) Analyze it -> returns puzzles (with fen + bestMove ideally)
-    const puzzles = await analyzeGame(gameWithPgn.pgn, "white");
+    const puzzles = (await analyzeGame(sourceGame.pgn, "white"))?.slice(0, 5) || [];
 
-    // 4) Send to frontend
     return res.json({
       username: username.trim(),
       sourceGame: {
-        // optional fields (won't break if missing)
-        url: (gameWithPgn as any)?.url,
-        end_time: (gameWithPgn as any)?.end_time,
-        time_class: (gameWithPgn as any)?.time_class
+        url: sourceGame.url,
+        end_time: sourceGame.end_time,
+        time_class: sourceGame.timeClass || sourceGame.time_class,
       },
-      puzzles
+      puzzles,
     });
   } catch (e: any) {
     console.error(e);
@@ -119,7 +109,7 @@ app.get("/api/puzzles", async (req, res) => {
 });
 
 // --------------------
-// Analyze (Stockfish best moments)
+// Analyze (POST only)
 // --------------------
 app.post("/api/analyze", async (req, res) => {
   try {
@@ -136,15 +126,18 @@ app.post("/api/analyze", async (req, res) => {
 
 // --------------------
 // Render (generate PNG/SVG)
+// - accepts: { puzzle, meta }  ✅
+// - or legacy: { puzzles:[...], meta } (uses puzzles[0])
 // --------------------
 app.post("/api/render", async (req, res) => {
   try {
-    const { puzzles, meta } = req.body || {};
-    if (!puzzles || !Array.isArray(puzzles)) {
-      return res.status(400).json({ error: "Puzzles array required" });
-    }
+    const body = req.body || {};
+    const meta = body.meta || {};
 
-    const result = await generateDesign(puzzles, meta || {});
+    const puzzle = body.puzzle || (Array.isArray(body.puzzles) ? body.puzzles[0] : null);
+    if (!puzzle) return res.status(400).json({ error: "Puzzle required" });
+
+    const result = await generateDesign(puzzle, meta);
     return res.json(result);
   } catch (e: any) {
     console.error(e);
@@ -152,9 +145,6 @@ app.post("/api/render", async (req, res) => {
   }
 });
 
-// --------------------
-// Start server
-// --------------------
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
