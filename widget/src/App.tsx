@@ -1,252 +1,170 @@
 import { useState } from "preact/hooks";
 import "./index.css";
 
-// Types
-interface Puzzle {
+type Puzzle = {
   title?: string;
-  fen?: string;
+  fen: string;
   bestMove?: string;
   description?: string;
-}
+};
 
-interface PuzzlesResponse {
+type BestMomentsResponse = {
   username: string;
-  sourceGame?: {
-    url?: string;
-    end_time?: number;
-    time_class?: string;
-  };
+  sourceGame?: { url?: string; end_time?: number; time_class?: string };
   puzzles: Puzzle[];
-}
-
-interface RenderResponse {
-  svg: string;
-  png: string; // data:image/png;base64,...
-}
+};
 
 declare global {
   interface Window {
-    CHESS_TEE: {
-      apiBase: string;
-      variantId: number;
+    CHESS_TEE?: {
+      apiBase?: string;
+      variantId?: number;
     };
   }
 }
 
 export function App() {
-  // Steps:
-  // 1 = enter username
-  // 2 = choose puzzle (among 5)
-  // 3 = preview + add to cart
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const config = window.CHESS_TEE || { apiBase: "http://localhost:3000", variantId: 0 };
+  const apiBase = config.apiBase || "http://localhost:3000";
 
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const [puzzles, setPuzzles] = useState<Puzzle[]>([]);
-  const [selectedPuzzle, setSelectedPuzzle] = useState<Puzzle | null>(null);
-
-  const [sourceGameUrl, setSourceGameUrl] = useState<string>("");
-  const [previewPng, setPreviewPng] = useState<string>(""); // data url
   const [error, setError] = useState("");
 
-  // Config (Shopify will inject this)
-  const config = window.CHESS_TEE || {
-    apiBase: "https://chess-tee-generator.onrender.com",
-    variantId: 0
-  };
+  const [moments, setMoments] = useState<BestMomentsResponse | null>(null);
+  const [selectedPuzzle, setSelectedPuzzle] = useState<Puzzle | null>(null);
 
-  // --------------------
-  // Step 1 -> load 5 puzzles
-  // --------------------
-  const loadPuzzles = async () => {
+  const [previewPng, setPreviewPng] = useState<string | null>(null);
+
+  async function loadBestMoments() {
     if (!username.trim()) return;
 
     setLoading(true);
     setError("");
-    setPuzzles([]);
+    setPreviewPng(null);
     setSelectedPuzzle(null);
-    setPreviewPng("");
-    setSourceGameUrl("");
 
     try {
-      const res = await fetch(
-        `${config.apiBase}/api/puzzles?username=${encodeURIComponent(
-          username.trim()
-        )}`
-      );
-      if (!res.ok) throw new Error("Could not load puzzles");
+      const res = await fetch(`${apiBase}/api/best-moments?username=${encodeURIComponent(username.trim())}`);
+      if (!res.ok) throw new Error("Could not load best moments");
+      const data: BestMomentsResponse = await res.json();
 
-      const data: PuzzlesResponse = await res.json();
+      if (!data.puzzles || data.puzzles.length === 0) {
+        throw new Error("No moments found");
+      }
 
-      setPuzzles(data.puzzles || []);
-      setSourceGameUrl(data?.sourceGame?.url || "");
+      setMoments(data);
       setStep(2);
     } catch (e: any) {
-      setError(e?.message || "Error loading puzzles");
+      setError(e?.message || "Error");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  // --------------------
-  // Step 2 -> choose 1 puzzle -> render
-  // --------------------
-  const choosePuzzleAndRender = async (puzzle: Puzzle) => {
-    setSelectedPuzzle(puzzle);
+  async function chooseMoment(p: Puzzle) {
+    setSelectedPuzzle(p);
+    setStep(3);
     setLoading(true);
     setError("");
-    setPreviewPng("");
-    setStep(3);
+    setPreviewPng(null);
 
     try {
-      const res = await fetch(`${config.apiBase}/api/render`, {
+      const res = await fetch(`${apiBase}/api/render`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // IMPORTANT: send ONE puzzle (inside an array of 1 because backend expects puzzles[])
         body: JSON.stringify({
-          puzzles: [puzzle],
-          meta: {
-            username: username.trim(),
-            tagline: "Choose your best moment",
-            gameUrl: sourceGameUrl
-          }
-        })
+          puzzle: p,
+          meta: { username: username.trim(), tagline: "Your custom tee preview" },
+        }),
       });
 
       if (!res.ok) throw new Error("Rendering failed");
-      const data: RenderResponse = await res.json();
+      const data = await res.json();
 
-      // png is a data URL already
-      setPreviewPng(data.png || "");
+      // backend returns { svg, png }
+      setPreviewPng(data.png || null);
     } catch (e: any) {
-      console.error(e);
-      setError(e?.message || "Rendering failed");
+      setError(e?.message || "Error rendering");
       setStep(2);
     } finally {
       setLoading(false);
     }
-  };
-
-  // --------------------
-  // Add to cart (Shopify)
-  // --------------------
-  const addToCart = async () => {
-    if (!previewPng || !selectedPuzzle) return;
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const formData = new FormData();
-      formData.append("id", String(config.variantId));
-      formData.append("quantity", "1");
-
-      // Store useful info for the order
-      formData.append("properties[ChessUsername]", username.trim());
-      if (sourceGameUrl) formData.append("properties[GameUrl]", sourceGameUrl);
-
-      formData.append("properties[PuzzleTitle]", selectedPuzzle.title || "");
-      formData.append("properties[FEN]", selectedPuzzle.fen || "");
-      formData.append("properties[BestMove]", selectedPuzzle.bestMove || "");
-
-      // This is the preview image (data url) — later we’ll upload it to S3/Cloudinary
-      formData.append("properties[PreviewPNG]", previewPng);
-
-      const res = await fetch("/cart/add.js", {
-        method: "POST",
-        body: formData
-      });
-
-      if (!res.ok) throw new Error("Failed to add to cart");
-      window.location.href = "/cart";
-    } catch (e: any) {
-      console.error(e);
-      setError(
-        e?.message ||
-          "Could not add to cart (if you're testing locally, Shopify cart might not exist)"
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+  }
 
   return (
-    <div class="chess-tee-container">
-      {error && <div class="error">{error}</div>}
+    <div class="chess-tee-container" style="max-width: 820px; margin: 0 auto; padding: 24px;">
+      <h1 style="margin: 0 0 12px;">Widget test</h1>
 
-      {/* STEP 1 */}
+      {error && (
+        <div style="padding: 12px; background: #ffe4e6; border: 1px solid #fecdd3; margin: 12px 0;">
+          {error}
+        </div>
+      )}
+
       {step === 1 && (
-        <div class="step-1">
-          <h2>Enter your Chess.com username</h2>
+        <div>
+          <h2 style="margin: 18px 0 12px;">Enter your Chess.com username</h2>
 
-          <div class="input-group">
+          <div style="display: flex; gap: 10px; align-items: center;">
             <input
-              type="text"
               value={username}
               onInput={(e) => setUsername(e.currentTarget.value)}
-              placeholder="e.g. PatesAuxLardons"
+              placeholder="e.g. hikaru"
+              style="padding: 10px; font-size: 16px; width: 260px;"
             />
-
-            <button disabled={loading || !username.trim()} onClick={loadPuzzles}>
+            <button
+              disabled={loading || !username.trim()}
+              onClick={loadBestMoments}
+              style="padding: 10px 14px; font-size: 16px; cursor: 'pointer';"
+            >
               {loading ? "Loading..." : "Find my best moments"}
             </button>
           </div>
 
-          <p class="sub-text">
-            We’ll look at your recent games and propose 5 moments. You choose 1.
+          <p style="margin-top: 12px;">
+            We’ll look at your recent games and propose <b>5 moments</b>. You choose <b>1</b>.
           </p>
         </div>
       )}
 
-      {/* STEP 2 */}
-      {step === 2 && (
-        <div class="step-2">
-          <button class="back-btn" onClick={() => setStep(1)}>
+      {step === 2 && moments && (
+        <div>
+          <button onClick={() => setStep(1)} style="padding: 8px 12px; margin: "0 0 16px";">
             ← Back
           </button>
 
-          <h2>Choose the moment to print</h2>
+          <h2 style="margin: 0 0 10px;">Choose the moment to print</h2>
 
-          {puzzles.length === 0 ? (
-            <div class="loading-state">
-              <p>No puzzles found. Try another username.</p>
-            </div>
-          ) : (
-            <div class="game-list">
-              {puzzles.map((p, idx) => (
-                <div
-                  class="game-card"
-                  onClick={() => choosePuzzleAndRender(p)}
-                >
-                  <div class="game-info">
-                    <div class="opponent">
-                      {p.title || `Moment #${idx + 1}`}
-                    </div>
-
-                    <div class="meta">
-                      {p.bestMove ? (
-                        <span>Best move: {p.bestMove}</span>
-                      ) : (
-                        <span>Best move: ?</span>
-                      )}
-                    </div>
-
-                    {p.description && (
-                      <div class="meta">{p.description}</div>
-                    )}
+          <div style="display: grid; gap: 12px;">
+            {moments.puzzles.slice(0, 5).map((p, idx) => (
+              <div
+                key={idx}
+                style="border: 1px solid #e5e7eb; padding: 14px; display: flex; justify-content: space-between; gap: 12px; align-items: center;"
+              >
+                <div>
+                  <div style="font-weight: 800; font-size: 18px;">
+                    {p.title || `Best moment #${idx + 1}`}
                   </div>
-
-                  <div class="select-btn">Choose</div>
+                  {p.bestMove && <div style="margin-top: 4px;">Best move: <b>{p.bestMove}</b></div>}
+                  {p.description && <div style="margin-top: 6px; color: #555;">{p.description}</div>}
                 </div>
-              ))}
-            </div>
-          )}
 
-          {sourceGameUrl && (
-            <p class="sub-text">
+                <button
+                  onClick={() => chooseMoment(p)}
+                  style="padding: 10px 12px; font-weight: 700;"
+                >
+                  Choose this moment
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {moments.sourceGame?.url && (
+            <p style="margin-top: 16px;">
               Source game:{" "}
-              <a href={sourceGameUrl} target="_blank" rel="noreferrer">
+              <a href={moments.sourceGame.url} target="_blank" rel="noreferrer">
                 open on chess.com
               </a>
             </p>
@@ -254,51 +172,29 @@ export function App() {
         </div>
       )}
 
-      {/* STEP 3 */}
       {step === 3 && (
-        <div class="step-3">
-          <button class="back-btn" onClick={() => setStep(2)}>
-            ← Back to choices
+        <div>
+          <button onClick={() => setStep(2)} style="padding: 8px 12px; margin: "0 0 16px";">
+            ← Back
           </button>
 
-          <h2>Your Custom Tee Preview</h2>
+          <h2 style="margin: 0 0 12px;">Your Custom Tee Preview</h2>
 
-          {loading ? (
-            <div class="loading-state">
-              <div class="spinner"></div>
-              <p>Generating your design...</p>
-            </div>
-          ) : (
-            <div class="preview-container">
-              {previewPng ? (
-                <img
-                  src={previewPng}
-                  alt="Design Preview"
-                  class="design-preview"
-                />
-              ) : (
-                <div class="loading-state">
-                  <p>No preview yet.</p>
-                </div>
-              )}
+          {loading && <p>Generating preview...</p>}
 
-              <div class="actions">
-                <button
-                  class="add-to-cart-btn"
-                  disabled={!previewPng || loading}
-                  onClick={addToCart}
-                >
-                  Add to Cart
-                </button>
-              </div>
-
-              {selectedPuzzle?.title && (
-                <p class="sub-text">Selected: {selectedPuzzle.title}</p>
-              )}
+          {!loading && previewPng && (
+            <div>
+              <img src={previewPng} alt="Preview" style="max-width: 100%; border: 1px solid #e5e7eb;" />
+              <p style="margin-top: 10px; color: "#555";">
+                Next: we’ll place this design on a T-shirt mockup, then connect Shopify.
+              </p>
             </div>
           )}
+
+          {!loading && !previewPng && <p>No preview yet.</p>}
         </div>
       )}
     </div>
   );
 }
+
