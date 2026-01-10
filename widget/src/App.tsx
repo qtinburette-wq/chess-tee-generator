@@ -1,199 +1,304 @@
-import { useState, useEffect } from 'preact/hooks';
-import './index.css';
+import { useState } from "preact/hooks";
+import "./index.css";
 
 // Types
-interface Game {
-    id: string;
-    white: { username: string; rating: number; result: string };
-    black: { username: string; rating: number; result: string };
-    date: string;
-    url: string;
-    pgn: string;
-    timeClass: string;
+interface Puzzle {
+  title?: string;
+  fen?: string;
+  bestMove?: string;
+  description?: string;
 }
 
-interface RenderResult {
-    designId: string;
-    printFileUrl: string;
-    previewUrl: string;
+interface PuzzlesResponse {
+  username: string;
+  sourceGame?: {
+    url?: string;
+    end_time?: number;
+    time_class?: string;
+  };
+  puzzles: Puzzle[];
+}
+
+interface RenderResponse {
+  svg: string;
+  png: string; // data:image/png;base64,...
 }
 
 declare global {
-    interface Window {
-        CHESS_TEE: {
-            apiBase: string;
-            variantId: number;
-        };
-    }
+  interface Window {
+    CHESS_TEE: {
+      apiBase: string;
+      variantId: number;
+    };
+  }
 }
 
 export function App() {
-    const [step, setStep] = useState(1);
-    const [username, setUsername] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [games, setGames] = useState<Game[]>([]);
-    const [selectedGame, setSelectedGame] = useState<Game | null>(null);
-    const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
-    const [error, setError] = useState('');
+  // Steps:
+  // 1 = enter username
+  // 2 = choose puzzle (among 5)
+  // 3 = preview + add to cart
+  const [step, setStep] = useState<1 | 2 | 3>(1);
 
-    const config = window.CHESS_TEE || { apiBase: 'http://localhost:3000', variantId: 0 };
+  const [username, setUsername] = useState("");
+  const [loading, setLoading] = useState(false);
 
-    const loadGames = async () => {
-        if (!username) return;
-        setLoading(true);
-        setError('');
-        try {
-            const res = await fetch(`${config.apiBase}/api/chesscom/games?username=${username}`);
-            if (!res.ok) throw new Error('Failed to fetch games');
-            const data = await res.json();
-            setGames(data.games);
-            setStep(2);
-        } catch (e: any) {
-            setError(e.message || 'Error loading games');
-        } finally {
-            setLoading(false);
-        }
-    };
+  const [puzzles, setPuzzles] = useState<Puzzle[]>([]);
+  const [selectedPuzzle, setSelectedPuzzle] = useState<Puzzle | null>(null);
 
-    const processGame = async (game: Game) => {
-        setSelectedGame(game);
-        setStep(3);
-        setLoading(true);
-        setError('');
+  const [sourceGameUrl, setSourceGameUrl] = useState<string>("");
+  const [previewPng, setPreviewPng] = useState<string>(""); // data url
+  const [error, setError] = useState("");
 
-        try {
-            // 1. Analyze
-            const analyzeRes = await fetch(`${config.apiBase}/api/analyze`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pgn: game.pgn })
-            });
-            if (!analyzeRes.ok) throw new Error('Analysis failed');
-            const analyzeData = await analyzeRes.json();
+  // Config (Shopify will inject this)
+  const config = window.CHESS_TEE || {
+    apiBase: "http://localhost:3000",
+    variantId: 0
+  };
 
-            // 2. Render
-            const renderRes = await fetch(`${config.apiBase}/api/render`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    puzzles: analyzeData.puzzles,
-                    meta: { username, gameUrl: game.url }
-                })
-            });
-            if (!renderRes.ok) throw new Error('Rendering failed');
-            const renderData = await renderRes.json();
+  // --------------------
+  // Step 1 -> load 5 puzzles
+  // --------------------
+  const loadPuzzles = async () => {
+    if (!username.trim()) return;
 
-            setRenderResult(renderData);
-        } catch (e: any) {
-            setError(e.message || 'Processing failed');
-            setStep(2); // Go back
-        } finally {
-            setLoading(false);
-        }
-    };
+    setLoading(true);
+    setError("");
+    setPuzzles([]);
+    setSelectedPuzzle(null);
+    setPreviewPng("");
+    setSourceGameUrl("");
 
-    const addToCart = async () => {
-        if (!renderResult || !selectedGame) return;
-        setLoading(true);
-        try {
-            const formData = new FormData();
-            formData.append('id', String(config.variantId));
-            formData.append('quantity', '1');
-            formData.append('properties[DesignId]', renderResult.designId);
-            formData.append('properties[PreviewUrl]', renderResult.previewUrl);
-            formData.append('properties[PrintFileUrl]', renderResult.printFileUrl);
-            formData.append('properties[ChessUsername]', username);
-            formData.append('properties[GameUrl]', selectedGame.url);
+    try {
+      const res = await fetch(
+        `${config.apiBase}/api/puzzles?username=${encodeURIComponent(
+          username.trim()
+        )}`
+      );
+      if (!res.ok) throw new Error("Could not load puzzles");
 
-            const res = await fetch('/cart/add.js', {
-                method: 'POST',
-                body: formData
-            });
+      const data: PuzzlesResponse = await res.json();
 
-            if (!res.ok) throw new Error('Failed to add to cart');
+      setPuzzles(data.puzzles || []);
+      setSourceGameUrl(data?.sourceGame?.url || "");
+      setStep(2);
+    } catch (e: any) {
+      setError(e?.message || "Error loading puzzles");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-            // Redirect to cart or show success
-            window.location.href = '/cart';
-        } catch (e: any) {
-            setError('Could not add to cart (Simulated in local dev?)');
-            console.error(e);
-        } finally {
-            setLoading(false);
-        }
-    };
+  // --------------------
+  // Step 2 -> choose 1 puzzle -> render
+  // --------------------
+  const choosePuzzleAndRender = async (puzzle: Puzzle) => {
+    setSelectedPuzzle(puzzle);
+    setLoading(true);
+    setError("");
+    setPreviewPng("");
+    setStep(3);
 
-    return (
-        <div class="chess-tee-container">
-            {error && <div class="error">{error}</div>}
+    try {
+      const res = await fetch(`${config.apiBase}/api/render`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // IMPORTANT: send ONE puzzle (inside an array of 1 because backend expects puzzles[])
+        body: JSON.stringify({
+          puzzles: [puzzle],
+          meta: {
+            username: username.trim(),
+            tagline: "Choose your best moment",
+            gameUrl: sourceGameUrl
+          }
+        })
+      });
 
-            {step === 1 && (
-                <div class="step-1">
-                    <h2>Enter Chess.com Username</h2>
-                    <div class="input-group">
-                        <input
-                            type="text"
-                            value={username}
-                            onInput={(e) => setUsername(e.currentTarget.value)}
-                            placeholder="e.g. hikaru"
-                        />
-                        <button disabled={loading || !username} onClick={loadGames}>
-                            {loading ? 'Loading...' : 'Find Games'}
-                        </button>
-                    </div>
-                </div>
-            )}
+      if (!res.ok) throw new Error("Rendering failed");
+      const data: RenderResponse = await res.json();
 
-            {step === 2 && (
-                <div class="step-2">
-                    <button class="back-btn" onClick={() => setStep(1)}>← Back</button>
-                    <h2>Select a Game</h2>
-                    <div class="game-list">
-                        {games.map(game => {
-                            const isWhite = game.white.username.toLowerCase() === username.toLowerCase();
-                            const opponent = isWhite ? game.black : game.white;
-                            const userResult = isWhite ? game.white.result : game.black.result;
-                            const colorClass = userResult === 'win' ? 'win' : userResult === 'checkmated' ? 'loss' : 'draw';
+      // png is a data URL already
+      setPreviewPng(data.png || "");
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.message || "Rendering failed");
+      setStep(2);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-                            return (
-                                <div class="game-card" onClick={() => processGame(game)}>
-                                    <div class={`result-indicator ${colorClass}`}></div>
-                                    <div class="game-info">
-                                        <div class="opponent">vs {opponent.username} ({opponent.rating})</div>
-                                        <div class="meta">{game.timeClass} • {new Date(game.date).toLocaleDateString()}</div>
-                                    </div>
-                                    <div class="select-btn">Select</div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            )}
+  // --------------------
+  // Add to cart (Shopify)
+  // --------------------
+  const addToCart = async () => {
+    if (!previewPng || !selectedPuzzle) return;
 
-            {step === 3 && (
-                <div class="step-3">
-                    <button class="back-btn" onClick={() => setStep(2)}>← Back to Games</button>
-                    <h2>Your Custom Tee</h2>
+    setLoading(true);
+    setError("");
 
-                    {loading ? (
-                        <div class="loading-state">
-                            <div class="spinner"></div>
-                            <p>Analyzing game and generating design...</p>
-                            <p class="sub-text">(This takes about 10-15 seconds)</p>
-                        </div>
-                    ) : (
-                        <div class="preview-container">
-                            {renderResult && (
-                                <img src={renderResult.previewUrl} alt="Design Preview" class="design-preview" />
-                            )}
-                            <div class="actions">
-                                <button class="add-to-cart-btn" onClick={addToCart}>
-                                    Add to Cart - $29.99
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
+    try {
+      const formData = new FormData();
+      formData.append("id", String(config.variantId));
+      formData.append("quantity", "1");
+
+      // Store useful info for the order
+      formData.append("properties[ChessUsername]", username.trim());
+      if (sourceGameUrl) formData.append("properties[GameUrl]", sourceGameUrl);
+
+      formData.append("properties[PuzzleTitle]", selectedPuzzle.title || "");
+      formData.append("properties[FEN]", selectedPuzzle.fen || "");
+      formData.append("properties[BestMove]", selectedPuzzle.bestMove || "");
+
+      // This is the preview image (data url) — later we’ll upload it to S3/Cloudinary
+      formData.append("properties[PreviewPNG]", previewPng);
+
+      const res = await fetch("/cart/add.js", {
+        method: "POST",
+        body: formData
+      });
+
+      if (!res.ok) throw new Error("Failed to add to cart");
+      window.location.href = "/cart";
+    } catch (e: any) {
+      console.error(e);
+      setError(
+        e?.message ||
+          "Could not add to cart (if you're testing locally, Shopify cart might not exist)"
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div class="chess-tee-container">
+      {error && <div class="error">{error}</div>}
+
+      {/* STEP 1 */}
+      {step === 1 && (
+        <div class="step-1">
+          <h2>Enter your Chess.com username</h2>
+
+          <div class="input-group">
+            <input
+              type="text"
+              value={username}
+              onInput={(e) => setUsername(e.currentTarget.value)}
+              placeholder="e.g. PatesAuxLardons"
+            />
+
+            <button disabled={loading || !username.trim()} onClick={loadPuzzles}>
+              {loading ? "Loading..." : "Find my best moments"}
+            </button>
+          </div>
+
+          <p class="sub-text">
+            We’ll look at your recent games and propose 5 moments. You choose 1.
+          </p>
         </div>
-    );
+      )}
+
+      {/* STEP 2 */}
+      {step === 2 && (
+        <div class="step-2">
+          <button class="back-btn" onClick={() => setStep(1)}>
+            ← Back
+          </button>
+
+          <h2>Choose the moment to print</h2>
+
+          {puzzles.length === 0 ? (
+            <div class="loading-state">
+              <p>No puzzles found. Try another username.</p>
+            </div>
+          ) : (
+            <div class="game-list">
+              {puzzles.map((p, idx) => (
+                <div
+                  class="game-card"
+                  onClick={() => choosePuzzleAndRender(p)}
+                >
+                  <div class="game-info">
+                    <div class="opponent">
+                      {p.title || `Moment #${idx + 1}`}
+                    </div>
+
+                    <div class="meta">
+                      {p.bestMove ? (
+                        <span>Best move: {p.bestMove}</span>
+                      ) : (
+                        <span>Best move: ?</span>
+                      )}
+                    </div>
+
+                    {p.description && (
+                      <div class="meta">{p.description}</div>
+                    )}
+                  </div>
+
+                  <div class="select-btn">Choose</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {sourceGameUrl && (
+            <p class="sub-text">
+              Source game:{" "}
+              <a href={sourceGameUrl} target="_blank" rel="noreferrer">
+                open on chess.com
+              </a>
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* STEP 3 */}
+      {step === 3 && (
+        <div class="step-3">
+          <button class="back-btn" onClick={() => setStep(2)}>
+            ← Back to choices
+          </button>
+
+          <h2>Your Custom Tee Preview</h2>
+
+          {loading ? (
+            <div class="loading-state">
+              <div class="spinner"></div>
+              <p>Generating your design...</p>
+            </div>
+          ) : (
+            <div class="preview-container">
+              {previewPng ? (
+                <img
+                  src={previewPng}
+                  alt="Design Preview"
+                  class="design-preview"
+                />
+              ) : (
+                <div class="loading-state">
+                  <p>No preview yet.</p>
+                </div>
+              )}
+
+              <div class="actions">
+                <button
+                  class="add-to-cart-btn"
+                  disabled={!previewPng || loading}
+                  onClick={addToCart}
+                >
+                  Add to Cart
+                </button>
+              </div>
+
+              {selectedPuzzle?.title && (
+                <p class="sub-text">Selected: {selectedPuzzle.title}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
