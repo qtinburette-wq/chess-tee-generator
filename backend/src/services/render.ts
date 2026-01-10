@@ -4,6 +4,9 @@ export type Puzzle = {
   title?: string;
   bestMove?: string;
   description?: string;
+
+  // NEW: we will render real chessboards from this
+  fen?: string;
 };
 
 export type RenderMeta = {
@@ -20,10 +23,116 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#039;");
 }
 
-export async function generateDesign(
-  puzzles: Puzzle[],
-  meta: RenderMeta = {}
-) {
+// -----------------------------
+// Chessboard from FEN (simple + correct)
+// -----------------------------
+type Theme = {
+  light: string;
+  dark: string;
+  border: string;
+};
+
+const DEFAULT_THEME: Theme = {
+  light: "#F3F4F6",
+  dark: "#111827",
+  border: "#111827"
+};
+
+const PIECE_UNICODE: Record<string, string> = {
+  K: "♔",
+  Q: "♕",
+  R: "♖",
+  B: "♗",
+  N: "♘",
+  P: "♙",
+  k: "♚",
+  q: "♛",
+  r: "♜",
+  b: "♝",
+  n: "♞",
+  p: "♟"
+};
+
+function parseFenBoard(fen: string): (string | null)[][] {
+  const placement = (fen || "").split(" ")[0] || "";
+  const ranks = placement.split("/");
+  if (ranks.length !== 8) throw new Error("Invalid FEN (ranks)");
+
+  return ranks.map((rankStr) => {
+    const row: (string | null)[] = [];
+    for (const ch of rankStr) {
+      if (/\d/.test(ch)) {
+        const n = Number(ch);
+        for (let i = 0; i < n; i++) row.push(null);
+      } else {
+        row.push(ch);
+      }
+    }
+    if (row.length !== 8) throw new Error("Invalid FEN (files)");
+    return row;
+  });
+}
+
+/**
+ * Returns the INNER SVG content (no outer <svg>...</svg> wrapper)
+ * so we can embed it in a parent SVG with <g transform="...">.
+ */
+function boardSvgInnerFromFen(opts: {
+  fen: string;
+  size: number; // px
+  theme?: Partial<Theme>;
+  whiteAtBottom?: boolean;
+}): string {
+  const size = opts.size;
+  const theme: Theme = { ...DEFAULT_THEME, ...(opts.theme || {}) };
+  const sq = size / 8;
+
+  const board = parseFenBoard(opts.fen);
+  const whiteAtBottom = opts.whiteAtBottom ?? true;
+
+  const getPieceAt = (r: number, f: number) => {
+    if (whiteAtBottom) return board[r][f];
+    return board[7 - r][7 - f];
+  };
+
+  let squares = "";
+  let pieces = "";
+
+  for (let r = 0; r < 8; r++) {
+    for (let f = 0; f < 8; f++) {
+      const isDark = (r + f) % 2 === 1;
+      const x = f * sq;
+      const y = r * sq;
+
+      squares += `<rect x="${x}" y="${y}" width="${sq}" height="${sq}" fill="${
+        isDark ? theme.dark : theme.light
+      }" />`;
+
+      const p = getPieceAt(r, f);
+      if (p) {
+        const glyph = PIECE_UNICODE[p] ?? "";
+        // Works well for MVP; later we can switch to custom SVG piece set.
+        pieces += `
+<text x="${x + sq / 2}" y="${y + sq / 2}"
+  text-anchor="middle" dominant-baseline="central"
+  font-family="Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, system-ui"
+  font-size="${sq * 0.78}">
+  ${escapeHtml(glyph)}
+</text>`;
+      }
+    }
+  }
+
+  // border last so it sits on top
+  const border = `<rect x="0" y="0" width="${size}" height="${size}" fill="none" stroke="${theme.border}" stroke-width="2" />`;
+
+  return `${squares}\n${pieces}\n${border}`;
+}
+
+// -----------------------------
+// Main render
+// -----------------------------
+export async function generateDesign(puzzles: Puzzle[], meta: RenderMeta = {}) {
   const width = 1200;
   const height = 1600;
 
@@ -79,7 +188,24 @@ export async function generateDesign(
       y += 32;
     }
 
-    y += 30;
+    y += 18;
+
+    // NEW: draw chessboard if we have a FEN
+    if (p.fen) {
+      const boardSize = 320; // tweak later
+      const inner = boardSvgInnerFromFen({
+        fen: p.fen,
+        size: boardSize,
+        theme: { light: "#F3F4F6", dark: "#111827", border: "#111827" }
+      });
+
+      // Embed board under the text
+      lines.push(`<g transform="translate(80, ${y})">${inner}</g>`);
+      y += boardSize + 26;
+    } else {
+      // If no FEN, keep spacing consistent
+      y += 20;
+    }
 
     lines.push(
       `<line x1="80" y1="${y}" x2="${width - 80}" y2="${y}" stroke="#eee" stroke-width="1" />`
@@ -103,13 +229,11 @@ export async function generateDesign(
   <rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff" />
   ${lines.join("\n")}
 </svg>
-`;
+`.trim();
 
   const resvg = new Resvg(svg, {
-    fitTo: {
-      mode: "width",
-      value: width
-    }
+    fitTo: { mode: "width", value: width },
+    background: "#ffffff" // ensures PNG is never transparent/blank
   });
 
   const pngBuffer = resvg.render().asPng();
