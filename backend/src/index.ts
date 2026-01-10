@@ -17,7 +17,7 @@ app.use(cors());
 app.use(express.json());
 
 // --------------------
-// Serve Widget (CommonJS-safe)
+// Serve Widget
 // --------------------
 // When compiled to dist/, __dirname will be backend/dist
 const widgetPath = path.join(__dirname, "../../widget/dist/assets");
@@ -27,7 +27,6 @@ app.use("/widget", express.static(widgetPath));
 app.get("/widget.js", (_req, res) => {
   try {
     const files = fs.readdirSync(widgetPath);
-
     const jsFile =
       files.find((f) => f.endsWith(".js") && f.includes("index")) ||
       files.find((f) => f.endsWith(".js"));
@@ -40,7 +39,7 @@ app.get("/widget.js", (_req, res) => {
 });
 
 // --------------------
-// Basic root route (helps Render)
+// Root route
 // --------------------
 app.get("/", (_req, res) => {
   res.type("text").send("Chess Tee Generator API is running ✅");
@@ -69,7 +68,7 @@ app.get("/api/chesscom/games", async (req, res) => {
 });
 
 // --------------------
-// NEW: Best moments for a username (simple version)
+// Best moments for a username
 // - takes the most recent game
 // - returns 5 puzzles + source game
 // --------------------
@@ -83,7 +82,7 @@ app.get("/api/best-moments", async (req, res) => {
       return res.status(404).json({ error: "No recent games found" });
     }
 
-    // Pick the most recent game (games are usually already sorted, but we’ll be safe)
+    // Most recent by end_time
     const sorted = [...games].sort((a: any, b: any) => (b.end_time || 0) - (a.end_time || 0));
     const sourceGame = sorted[0];
 
@@ -98,7 +97,6 @@ app.get("/api/best-moments", async (req, res) => {
       sourceGame: {
         url: sourceGame.url,
         end_time: sourceGame.end_time,
-        time_class: sourceGame.timeClass || sourceGame.time_class,
       },
       puzzles,
     });
@@ -126,7 +124,7 @@ app.post("/api/analyze", async (req, res) => {
 
 // --------------------
 // Render (generate PNG/SVG)
-// - accepts: { puzzle, meta }  ✅
+// - accepts: { puzzle, meta } ✅
 // - or legacy: { puzzles:[...], meta } (uses puzzles[0])
 // --------------------
 app.post("/api/render", async (req, res) => {
@@ -145,6 +143,10 @@ app.post("/api/render", async (req, res) => {
   }
 });
 
+// --------------------
+// Start server
+// --------------------
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
+
